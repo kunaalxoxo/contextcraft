@@ -8,7 +8,7 @@ export default defineConfig(({mode}) => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.OPENROUTER_API_KEY': JSON.stringify(env.OPENROUTER_API_KEY),
+      'process.env.MISTRAL_API_KEY': JSON.stringify(env.MISTRAL_API_KEY),
     },
     resolve: {
       alias: {

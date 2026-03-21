@@ -87,51 +87,23 @@ app.post('/api/scrape', async (req, res) => {
 // POST /api/generate
 app.post('/api/generate', async (req, res) => {
   try {
-    const { messages, model } = req.body;
+    const { messages } = req.body;
     
-    const attemptGenerate = async (targetModel: string) => {
-      return await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-        model: targetModel,
-        messages,
-        response_format: { type: "json_object" },
-        temperature: 0.72,
-        max_tokens: 6000
-      }, {
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "HTTP-Referer": "http://localhost:5173",
-          "X-Title": "ContextCraft",
-          "Content-Type": "application/json"
-        }
-      });
-    };
-
-    const modelsToTry = [
-      model || "meta-llama/llama-3.3-70b-instruct:free",
-      "deepseek/deepseek-chat-v3-0324:free",
-      "mistralai/mistral-small-3.1-24b-instruct:free",
-      "openrouter/free" // Ultimate fail-safe
-    ];
-
-    let lastError: any;
-    for (const targetModel of modelsToTry) {
-      try {
-        const resp = await attemptGenerate(targetModel);
-        return res.json(resp.data);
-      } catch (err: any) {
-        lastError = err;
-        const status = err.response?.status;
-        // If rate limited, not found, or bad gateway, try the next model
-        if (status === 429 || status === 404 || status === 502) {
-          console.warn(`[OpenRouter] ${targetModel} failed with status ${status}. Falling back...`);
-          continue;
-        }
-        // For hard errors (like 401 Unauthorized or 400 Bad Request), don't retry
-        break;
+    // Attempt Mistral Large connection (Gemini Pro equivalent logic model)
+    const response = await axios.post("https://api.mistral.ai/v1/chat/completions", {
+      model: "mistral-large-latest",
+      messages,
+      response_format: { type: "json_object" },
+      temperature: 0.72,
+      max_tokens: 6000
+    }, {
+      headers: {
+        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        "Content-Type": "application/json"
       }
-    }
+    });
 
-    throw lastError;
+    return res.json(response.data);
   } catch (error: any) {
     console.error('Generate Error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Generation failed', details: error.response?.data || error.message });
