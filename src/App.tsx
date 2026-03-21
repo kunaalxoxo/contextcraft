@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 import { Search, Mail, MessageSquare, Target, Zap, CheckCircle2, Loader2, AlertCircle, Copy, Brain, ThumbsUp, ThumbsDown } from 'lucide-react';
+import axios from 'axios';
 
 interface OutreachResult {
   researchNotes: string;
@@ -119,6 +120,7 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<OutreachResult | null>(null);
   const [error, setError] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
 
   const handleGenerate = async () => {
     if (!targetName || !targetCompany || !goal) {
@@ -131,117 +133,90 @@ export default function App() {
     setResult(null);
 
     try {
-      let gatheredContext = "";
-      
-      // Perform free web search via DuckDuckGo + CORS proxy
-      const searchContext = await fetchSearchResults(`${targetName} ${targetCompany}`);
-      if (searchContext) {
-        gatheredContext += `\n--- Web Search Findings ---\n${searchContext}\n`;
-      }
-      
-      // Perform free URL scraping if provided
+      // Step 1 - Parallel Research
+      setStatusMessage('🔍 Searching the web for live data...');
+      const queries = [
+        `${targetName} ${targetCompany} interviews podcast talks`,
+        `${targetName} ${targetCompany} LinkedIn blog posts articles writing`,
+        `${targetName} ${targetCompany} news announcements recent 2024 2025`
+      ];
+
+      const searchPromises = queries.map(q => axios.post('/api/search', { query: q }).catch(() => null));
+      const searchResults = await Promise.all(searchPromises);
+
+      let allUrls: string[] = [];
+      searchResults.forEach(res => {
+        if (res?.data?.results) {
+          allUrls.push(...res.data.results.map((r: any) => r.url));
+        }
+      });
+      allUrls = Array.from(new Set(allUrls)).slice(0, 4);
+
+      // Step 2 - Deep Scrape
+      setStatusMessage('🕸️ Deep scraping top sources...');
+      const scrapePromises = allUrls.map(url => axios.post('/api/scrape', { url }).catch(() => null));
+      const scrapeResults = await Promise.all(scrapePromises);
+
+      let researchContext = "";
+      scrapeResults.forEach((res, i) => {
+        if (res?.data && !res.data.error) {
+          researchContext += `\n\n--- Source: ${allUrls[i]} ---\nTitle: ${res.data.title}\nContent: ${res.data.fullText}\n`;
+        }
+      });
+
       if (referenceUrl) {
-        const urlContext = await fetchUrlContent(referenceUrl);
-        if (urlContext) {
-          gatheredContext += `\n--- Content from Reference URL ---\n${urlContext}\n`;
+        const refScrape = await axios.post('/api/scrape', { url: referenceUrl }).catch(() => null);
+        if (refScrape?.data && !refScrape.data.error) {
+          researchContext += `\n\n--- Source (User Provided): ${referenceUrl} ---\nTitle: ${refScrape.data.title}\nContent: ${refScrape.data.fullText}\n`;
         }
       }
 
-      const systemPrompt = `You are ContextCraft, an elite Master Conversationalist, Psychologist, and Strategist (equivalent to Gemini 3.1 Pro).
-Your task is to respond ONLY with a valid JSON object (no markdown fences) matching this schema exactly:
-{
-  "_thoughtProcess": "Before drafting, explicitly write a long, highly analytical chain-of-thought diagnosing the target's psychology based on the real-world context gathered. Reason step-by-step about what tone they respect.",
-  "researchNotes": "string",
-  "personalityProfile": {
-    "coreValues": ["string"],
-    "motivators": ["string"],
-    "cognitiveBiases": ["string"],
-    "mindset": "string",
-    "communicationStyle": "string",
-    "overallTone": "string",
-    "toneAnalysis": {
-      "intensity": "string",
-      "formality": "string",
-      "linguisticQuirks": ["string"],
-      "strategicChoice": "string"
-    },
-    "likes": ["string"],
-    "dislikes": ["string"]
-  },
-  "emailSubject": "string",
-  "emailBody": "string",
-  "linkedinDM": "string (under 300 chars)",
-  "followUp1": "string",
-  "followUp2": "string",
-  "score": 0,
-  "reasoning": "string"
-}
-Do not include any extra text outside the JSON object.`;
+      // Step 3 - AI Generation
+      setStatusMessage('🧠 AI analysing psychology and drafting messages...');
+      
+      const systemPrompt = `You are ContextCraft, an elite psychological strategist and master of persuasion science.
+You have been given REAL scraped web data about the target. Your job is to deeply analyse
+this data and produce hyper-personalised outreach.
 
-      const userPrompt = `Target Name: ${targetName}
-Target Company: ${targetCompany}
-Outreach Goal: ${goal}
-${referenceUrl ? 'Reference Article/Post URL: ' + referenceUrl : ''}
+CRITICAL RULES:
+1. You MUST reference specific facts, quotes, projects, or statements from the research data
+2. Never make up facts — only use what is in the provided research
+3. Think step by step before writing anything — show your reasoning in _thoughtProcess
+4. Respond ONLY with a valid JSON object, no markdown fences, no text outside JSON
+5. The email must feel like it was written by someone who spent 2 hours researching the target
 
-Here is the LIVE CONTEXT gathered from the web about this person/company:
-${gatheredContext}
+JSON schema must include _thoughtProcess as the FIRST field (a long reasoning monologue),
+then all existing fields: researchNotes, personalityProfile (with coreValues, motivators,
+cognitiveBiases, mindset, communicationStyle, overallTone, toneAnalysis, likes, dislikes),
+emailSubject, emailBody, linkedinDM, followUp1, followUp2, score, reasoning.`;
 
-Please do the following:
-1. Synthesize the provided LIVE CONTEXT notes along with your training knowledge into brief research notes.
-2. Build a deep psychological profile inferring core values, motivators, cognitive biases, mindset, communication style, overall tone, and tone analysis (intensity, formality, linguistic quirks, strategic choice). Include likes and dislikes.
-3. Draft a highly personalized cold email (subject and body) incorporating these insights. Align with their values, adapt to their tone, and bypass cognitive biases.
-4. Draft a LinkedIn DM under 300 chars matching their style.
-5. Generate followUp1 (3 days later) and followUp2 (7 days later).
-6. Score your strategy (0-100 integer) and provide a detailed psychological reasoning. Explain why the tone choice leverages/bypasses cognitive biases to increase positive response likelihood.`;
+      const userPrompt = `REAL RESEARCH DATA (scraped live from the web):
+${researchContext}
 
-      const apiPayload = {
+TARGET: ${targetName} at ${targetCompany}
+GOAL: ${goal}
+
+Now produce the JSON following the full schema including _thoughtProcess at the top.`;
+
+      const genResponse = await axios.post('/api/generate', {
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.72,
-        max_tokens: 6000
-      };
-
-      const customHeaders = {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": window.location.origin,
-        "X-Title": "ContextCraft",
-        "Content-Type": "application/json"
-      };
-
-      // Attempt highest logic model first (Llama 3.3 70B limits check)
-      let response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST", headers: customHeaders,
-        body: JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct:free", ...apiPayload })
+        ]
       });
 
-      // Automatic fallback if rate-limited
-      if (response.status === 429 || !response.ok) {
-        console.warn("70B Model rate limited. Falling back to OpenRouter Auto.");
-        response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST", headers: customHeaders,
-          body: JSON.stringify({ model: "openrouter/free", ...apiPayload })
-        });
-      }
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`API Error: ${response.status} ${errText}`);
-      }
-
-      const data = await response.json();
+      const data = genResponse.data;
       if (data.choices && data.choices.length > 0) {
         const textContent = data.choices[0].message.content;
-        const parsedResult = safeParseJSON(textContent) as OutreachResult;
-        setResult(parsedResult);
+        const parsedResult = safeParseJSON(textContent) as any;
+        delete parsedResult._thoughtProcess;
+        setResult(parsedResult as OutreachResult);
       } else {
         throw new Error("No response generated.");
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'An error occurred while generating the outreach.');
+      setError(err.response?.data?.error || err.message || 'An error occurred while generating the outreach.');
     } finally {
       setIsGenerating(false);
     }
@@ -399,7 +374,7 @@ Please do the following:
             <div className="h-full min-h-[400px] bg-white rounded-2xl border border-slate-200 flex flex-col items-center justify-center text-center p-8 shadow-sm">
               <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-4" />
               <h3 className="text-xl font-semibold text-slate-900 mb-2">Agents are working...</h3>
-              <p className="text-slate-500 animate-pulse">Searching the web, analyzing context, and drafting messages.</p>
+              <p className="text-slate-500 animate-pulse">{statusMessage || 'Initializing...'}</p>
             </div>
           ) : result ? (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
