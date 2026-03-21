@@ -55,7 +55,40 @@ function safeParseJSON(text: string) {
   return JSON.parse(text);
 }
 
+async function fetchUrlContent(url: string) {
+  try {
+    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+    const data = await response.json();
+    if (!data.contents) return '';
+    
+    // Extract text from HTML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(data.contents, 'text/html');
+    // Remove scripts and styles
+    doc.querySelectorAll('script, style, nav, footer, header').forEach(el => el.remove());
+    return doc.body.textContent?.replace(/\s+/g, ' ').substring(0, 5000) || '';
+  } catch (err) {
+    console.error("Failed to fetch URL content:", err);
+    return '';
+  }
+}
 
+async function fetchSearchResults(query: string) {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+    const data = await response.json();
+    if (!data.contents) return '';
+    
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(data.contents, 'text/html');
+    const snippets = Array.from(doc.querySelectorAll('.result__snippet')).map(el => el.textContent?.trim());
+    return snippets.join('\n\n').substring(0, 3000) || 'No web search results available.';
+  } catch (err) {
+    console.error("Failed to fetch search results:", err);
+    return '';
+  }
+}
 
 export default function App() {
   const [targetName, setTargetName] = useState('');
@@ -78,6 +111,22 @@ export default function App() {
     setResult(null);
 
     try {
+      let gatheredContext = "";
+      
+      // Perform free web search via DuckDuckGo + CORS proxy
+      const searchContext = await fetchSearchResults(`${targetName} ${targetCompany}`);
+      if (searchContext) {
+        gatheredContext += `\n--- Web Search Findings ---\n${searchContext}\n`;
+      }
+      
+      // Perform free URL scraping if provided
+      if (referenceUrl) {
+        const urlContext = await fetchUrlContent(referenceUrl);
+        if (urlContext) {
+          gatheredContext += `\n--- Content from Reference URL ---\n${urlContext}\n`;
+        }
+      }
+
       const systemPrompt = `You are ContextCraft, a Master Conversationalist & Psychological Strategist.
 Your task is to respond ONLY with a valid JSON object (no markdown fences) matching this schema exactly:
 {
@@ -113,14 +162,16 @@ Target Company: ${targetCompany}
 Outreach Goal: ${goal}
 ${referenceUrl ? 'Reference Article/Post URL: ' + referenceUrl : ''}
 
+Here is the LIVE CONTEXT gathered from the web about this person/company:
+${gatheredContext}
+
 Please do the following:
-1. Research the target using your training knowledge (and the reference link if provided) to find comprehensive context about ${targetName} at ${targetCompany}.
-2. Synthesize findings into brief research notes.
-3. Build a deep psychological profile inferring core values, motivators, cognitive biases, mindset, communication style, overall tone, and tone analysis (intensity, formality, linguistic quirks, strategic choice). Include likes and dislikes.
-4. Draft a highly personalized cold email (subject and body) incorporating these insights. Align with their values, adapt to their tone, and bypass cognitive biases.
-5. Draft a LinkedIn DM under 300 chars matching their style.
-6. Generate followUp1 (3 days later) and followUp2 (7 days later).
-7. Score your strategy (0-100 integer) and provide a detailed psychological reasoning. Explain why the tone choice leverages/bypasses cognitive biases to increase positive response likelihood.`;
+1. Synthesize the provided LIVE CONTEXT notes along with your training knowledge into brief research notes.
+2. Build a deep psychological profile inferring core values, motivators, cognitive biases, mindset, communication style, overall tone, and tone analysis (intensity, formality, linguistic quirks, strategic choice). Include likes and dislikes.
+3. Draft a highly personalized cold email (subject and body) incorporating these insights. Align with their values, adapt to their tone, and bypass cognitive biases.
+4. Draft a LinkedIn DM under 300 chars matching their style.
+5. Generate followUp1 (3 days later) and followUp2 (7 days later).
+6. Score your strategy (0-100 integer) and provide a detailed psychological reasoning. Explain why the tone choice leverages/bypasses cognitive biases to increase positive response likelihood.`;
 
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
