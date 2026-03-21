@@ -82,8 +82,28 @@ async function fetchSearchResults(query: string) {
     
     const parser = new DOMParser();
     const doc = parser.parseFromString(data.contents, 'text/html');
-    const snippets = Array.from(doc.querySelectorAll('.result__snippet')).map(el => el.textContent?.trim());
-    return snippets.join('\n\n').substring(0, 3000) || 'No web search results available.';
+    
+    // Get snippets
+    const snippets = Array.from(doc.querySelectorAll('.result__snippet')).slice(0, 5).map(el => el.textContent?.trim());
+    let combinedContext = snippets.join('\\n\\n');
+
+    // Extract top 2 links and deep-scrape them for Gemini-level context retrieval
+    const links = Array.from(doc.querySelectorAll('.result__url')).slice(0, 2).map(el => {
+      const href = el.getAttribute('href');
+      // DDG redirects look like //duckduckgo.com/l/?uddg=https://...
+      if (href && href.includes('uddg=')) {
+        try { return decodeURIComponent(href.split('uddg=')[1].split('&')[0]); } catch { return null; }
+      }
+      return href;
+    }).filter(Boolean) as string[];
+
+    // Parallel fetch top 2 URLs
+    const deepScrapes = await Promise.all(links.map(l => fetchUrlContent(l)));
+    deepScrapes.forEach((scrape, i) => {
+      if (scrape) combinedContext += `\\n\\n--- Deep Scrape from Result ${i + 1} ---\\n${scrape.substring(0, 4000)}`;
+    });
+
+    return combinedContext.substring(0, 10000) || 'No web search results available.';
   } catch (err) {
     console.error("Failed to fetch search results:", err);
     return '';
@@ -127,9 +147,10 @@ export default function App() {
         }
       }
 
-      const systemPrompt = `You are ContextCraft, a Master Conversationalist & Psychological Strategist.
+      const systemPrompt = `You are ContextCraft, an elite Master Conversationalist, Psychologist, and Strategist (equivalent to Gemini 3.1 Pro).
 Your task is to respond ONLY with a valid JSON object (no markdown fences) matching this schema exactly:
 {
+  "_thoughtProcess": "Before drafting, explicitly write a long, highly analytical chain-of-thought diagnosing the target's psychology based on the real-world context gathered. Reason step-by-step about what tone they respect.",
   "researchNotes": "string",
   "personalityProfile": {
     "coreValues": ["string"],
@@ -173,25 +194,37 @@ Please do the following:
 5. Generate followUp1 (3 days later) and followUp2 (7 days later).
 6. Score your strategy (0-100 integer) and provide a detailed psychological reasoning. Explain why the tone choice leverages/bypasses cognitive biases to increase positive response likelihood.`;
 
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "ContextCraft",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openrouter/free",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.72,
-          max_tokens: 4096
-        })
+      const apiPayload = {
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.72,
+        max_tokens: 6000
+      };
+
+      const customHeaders = {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "ContextCraft",
+        "Content-Type": "application/json"
+      };
+
+      // Attempt highest logic model first (Llama 3.3 70B limits check)
+      let response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST", headers: customHeaders,
+        body: JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct:free", ...apiPayload })
       });
+
+      // Automatic fallback if rate-limited
+      if (response.status === 429 || !response.ok) {
+        console.warn("70B Model rate limited. Falling back to OpenRouter Auto.");
+        response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST", headers: customHeaders,
+          body: JSON.stringify({ model: "openrouter/free", ...apiPayload })
+        });
+      }
 
       if (!response.ok) {
         const errText = await response.text();
