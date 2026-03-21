@@ -4,15 +4,14 @@
  */
 
 import { useState } from 'react';
-import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { Search, Mail, MessageSquare, Target, Zap, CheckCircle2, Loader2, AlertCircle, Copy, Brain, ThumbsUp, ThumbsDown } from 'lucide-react';
-
-// Initialize Gemini API
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface OutreachResult {
   researchNotes: string;
   personalityProfile: {
+    coreValues: string[];
+    motivators: string[];
+    cognitiveBiases: string[];
     mindset: string;
     communicationStyle: string;
     overallTone: string;
@@ -48,11 +47,28 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+function safeParseJSON(text: string) {
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (match) {
+    return JSON.parse(match[1]);
+  }
+  return JSON.parse(text);
+}
+
+const MODELS = [
+  { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek Chat V3 (Free)' },
+  { id: 'meta-llama/llama-4-maverick:free', name: 'Llama 4 Maverick (Free)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 (Free)' },
+  { id: 'openrouter/free', name: 'OpenRouter Auto (Free)' },
+];
+
 export default function App() {
   const [targetName, setTargetName] = useState('');
   const [targetCompany, setTargetCompany] = useState('');
   const [goal, setGoal] = useState('');
   const [referenceUrl, setReferenceUrl] = useState('');
+  const [selectedModel, setSelectedModel] = useState('deepseek/deepseek-chat-v3-0324:free');
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<OutreachResult | null>(null);
@@ -69,85 +85,79 @@ export default function App() {
     setResult(null);
 
     try {
-      const prompt = `
-        You are ContextCraft, a Master Conversationalist & Psychological Strategist. 
-        Your task is to not only research the following target but also deeply understand and adapt to their human psychology and communication nuances. You will analyze their personality and write a hyper-personalized outreach message designed for maximum rapport and influence, perfectly matching their mindset.
-        
-        Target Name: ${targetName}
-        Target Company: ${targetCompany}
-        Outreach Goal: ${goal}
-        ${referenceUrl ? 'Reference Article/Post URL: ' + referenceUrl : ''}
-        
-        Step 1: Use your Google Search tool to search the ENTIRE WEB (news, personal blogs, Twitter/X, GitHub, podcasts, company pages, and LinkedIn) to find comprehensive context about ${targetName} at ${targetCompany}. Do not restrict your search to just LinkedIn; find their digital footprint everywhere. ${referenceUrl ? 'CRITICAL: You MUST also read and analyze the provided Reference Article/Post URL (e.g., LinkedIn article) to deeply understand their specific thoughts, tone, and recent focus.' : ''}
-        Step 2: Synthesize your findings into brief research notes.
-        Step 3: Analyze the target's personality based on ${referenceUrl ? 'the provided reference link and ' : ''}broader web search results. Perform a deep Psychological Profiling inferring their potential core values, primary motivators (e.g., impact, efficiency, innovation), and likely cognitive biases (e.g., action bias, confirmation bias towards data), in addition to their likely mindset (e.g., visionary, pragmatic, data-driven), preferred communication style (e.g., direct, formal, story-driven), overall tone (e.g., casual, academic, intense, humorous), what they likely appreciate (likes), and what they likely hate in cold emails (dislikes). Also, perform a nuanced tone analysis: identify their tone's intensity, formality level, and any specific linguistic quirks.
-        Step 4: Draft a highly personalized cold email (subject and body). CRITICAL INSTRUCTION: You MUST incorporate these deep psychological insights directly into the drafting of the outreach message. Adapt your message generation to either mirror their tone for rapport or subtly contrast it based on the strategic Outreach Goal. Align your value proposition with their inferred core values and motivators, and frame your ask to bypass or leverage their cognitive biases. If they are 'data-driven', use metrics. If they 'hate fluff', be brutally concise. Explicitly cater to their 'likes' and strictly avoid their 'dislikes'.
-        Step 5: Draft a shorter, punchy LinkedIn DM variant (under 300 characters). This must also strictly adhere to their preferred communication style and psychological profile.
-        Step 6: Generate 2 short follow-up email variants. Follow-up 1 (3 days later) should be a gentle bump providing a tiny bit of extra value. Follow-up 2 (7 days later) should be a polite final attempt.
-        Step 7: Score your own outreach out of 100 based on personalization depth, psychological alignment, tone, and likelihood of response. In your 'reasoning', you MUST provide a detailed, actionable, and psychologically informed explanation for this score. If the score is high, highlight the key strengths (e.g., 'excellent incorporation of user's interest X', 'strong tone alignment'). If the score is low, explicitly state the primary weaknesses (e.g., 'lack of personalization', 'tone mismatch'). Additionally, you MUST detail the psychological underpinnings of your chosen outreach strategy. Explain *why* a particular tone (mirroring or contrasting) was selected based on principles of persuasion or rapport-building, and *how* this choice is strategically expected to influence the recipient's perception and increase the likelihood of a positive response. Crucially, you MUST explain how your strategy specifically leverages or bypasses the target's identified cognitive biases, detailing the psychological mechanism at play.
-      `;
+      const systemPrompt = `You are ContextCraft, a Master Conversationalist & Psychological Strategist.
+Your task is to respond ONLY with a valid JSON object (no markdown fences) matching this schema exactly:
+{
+  "researchNotes": "string",
+  "personalityProfile": {
+    "coreValues": ["string"],
+    "motivators": ["string"],
+    "cognitiveBiases": ["string"],
+    "mindset": "string",
+    "communicationStyle": "string",
+    "overallTone": "string",
+    "toneAnalysis": {
+      "intensity": "string",
+      "formality": "string",
+      "linguisticQuirks": ["string"],
+      "strategicChoice": "string"
+    },
+    "likes": ["string"],
+    "dislikes": ["string"]
+  },
+  "emailSubject": "string",
+  "emailBody": "string",
+  "linkedinDM": "string (under 300 chars)",
+  "followUp1": "string",
+  "followUp2": "string",
+  "score": 0,
+  "reasoning": "string"
+}
+Do not include any extra text outside the JSON object.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt,
-        config: {
-          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
-          tools: [{ googleSearch: {} }, { urlContext: {} }], // Enables web research and URL reading
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              researchNotes: { 
-                type: Type.STRING, 
-                description: "Bullet points of key facts found via search about the person or company." 
-              },
-              personalityProfile: { 
-                type: Type.OBJECT,
-                description: "Deep psychological profile of the target.",
-                properties: {
-                  coreValues: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Inferred core values (e.g., transparency, autonomy, speed)." },
-                  motivators: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Primary motivators driving their work (e.g., impact, efficiency, innovation)." },
-                  cognitiveBiases: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Likely cognitive biases to bypass or leverage (e.g., action bias, confirmation bias towards data)." },
-                  mindset: { type: Type.STRING, description: "The target's core professional mindset or worldview." },
-                  communicationStyle: { type: Type.STRING, description: "How they prefer to communicate (e.g., direct, analytical, visionary)." },
-                  overallTone: { type: Type.STRING, description: "The dominant tone of their online presence and writings (e.g., intense, casual, academic)." },
-                  toneAnalysis: {
-                    type: Type.OBJECT,
-                    description: "Nuanced analysis of the target's tone and the strategic choice for the outreach.",
-                    properties: {
-                      intensity: { type: Type.STRING, description: "The intensity of their tone (e.g., high-energy, calm, urgent)." },
-                      formality: { type: Type.STRING, description: "The formality level (e.g., highly formal, business casual, extremely casual)." },
-                      linguisticQuirks: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Specific linguistic quirks, phrases, or structural habits they use." },
-                      strategicChoice: { type: Type.STRING, description: "Explanation of whether to mirror or contrast their tone, and why." }
-                    },
-                    required: ["intensity", "formality", "linguisticQuirks", "strategicChoice"]
-                  },
-                  likes: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Things they likely appreciate or value in professional contexts." },
-                  dislikes: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Things they likely hate, especially in cold outreach (e.g., fluff, long emails)." }
-                },
-                required: ["coreValues", "motivators", "cognitiveBiases", "mindset", "communicationStyle", "overallTone", "toneAnalysis", "likes", "dislikes"]
-              },
-              emailSubject: { type: Type.STRING },
-              emailBody: { type: Type.STRING },
-              linkedinDM: { type: Type.STRING },
-              followUp1: { type: Type.STRING, description: "First follow-up email body (3 days later)" },
-              followUp2: { type: Type.STRING, description: "Second follow-up email body (7 days later)" },
-              score: { 
-                type: Type.NUMBER, 
-                description: "0-100 score of how effective this outreach is." 
-              },
-              reasoning: { 
-                type: Type.STRING, 
-                description: "Actionable, detailed, and psychologically informed explanation for the score. If high, highlight key strengths (e.g., 'strong tone alignment'). If low, state primary weaknesses (e.g., 'lack of personalization'). Must detail the psychological underpinnings of the strategy, *why* a particular tone (mirroring/contrasting) was selected based on principles of persuasion or rapport-building, *how* this choice strategically influences the recipient's perception to increase positive response likelihood, and how the message leverages or bypasses cognitive biases." 
-              }
-            },
-            required: ["researchNotes", "personalityProfile", "emailSubject", "emailBody", "linkedinDM", "followUp1", "followUp2", "score", "reasoning"]
-          }
-        }
+      const userPrompt = `Target Name: ${targetName}
+Target Company: ${targetCompany}
+Outreach Goal: ${goal}
+${referenceUrl ? 'Reference Article/Post URL: ' + referenceUrl : ''}
+
+Please do the following:
+1. Research the target using your training knowledge (and the reference link if provided) to find comprehensive context about ${targetName} at ${targetCompany}.
+2. Synthesize findings into brief research notes.
+3. Build a deep psychological profile inferring core values, motivators, cognitive biases, mindset, communication style, overall tone, and tone analysis (intensity, formality, linguistic quirks, strategic choice). Include likes and dislikes.
+4. Draft a highly personalized cold email (subject and body) incorporating these insights. Align with their values, adapt to their tone, and bypass cognitive biases.
+5. Draft a LinkedIn DM under 300 chars matching their style.
+6. Generate followUp1 (3 days later) and followUp2 (7 days later).
+7. Score your strategy (0-100 integer) and provide a detailed psychological reasoning. Explain why the tone choice leverages/bypasses cognitive biases to increase positive response likelihood.`;
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "ContextCraft",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.72,
+          max_tokens: 4096
+        })
       });
 
-      if (response.text) {
-        const parsedResult = JSON.parse(response.text) as OutreachResult;
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`API Error: ${response.status} ${errText}`);
+      }
+
+      const data = await response.json();
+      if (data.choices && data.choices.length > 0) {
+        const textContent = data.choices[0].message.content;
+        const parsedResult = safeParseJSON(textContent) as OutreachResult;
         setResult(parsedResult);
       } else {
         throw new Error("No response generated.");
@@ -228,6 +238,21 @@ export default function App() {
                   onChange={(e) => setReferenceUrl(e.target.value)}
                   className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">AI Model</label>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                >
+                  {MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {error && (
@@ -446,6 +471,9 @@ export default function App() {
                 <div className="p-6">
                   <div className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
                     {result.linkedinDM}
+                  </div>
+                  <div className="mt-3 text-right text-xs font-medium text-slate-400">
+                    {result.linkedinDM.length}/300 chars
                   </div>
                 </div>
               </div>
