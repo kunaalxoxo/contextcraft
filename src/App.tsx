@@ -55,20 +55,13 @@ function safeParseJSON(text: string) {
   return JSON.parse(text);
 }
 
-const MODELS = [
-  { id: 'openrouter/free', name: 'OpenRouter Auto (Free)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)' },
-  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 24B (Free)' },
-  { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (Free)' },
-  { id: 'qwen/qwen3-coder:free', name: 'Qwen 3 Coder (Free)' }
-];
+
 
 export default function App() {
   const [targetName, setTargetName] = useState('');
   const [targetCompany, setTargetCompany] = useState('');
   const [goal, setGoal] = useState('');
   const [referenceUrl, setReferenceUrl] = useState('');
-  const [selectedModel, setSelectedModel] = useState('openrouter/free');
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<OutreachResult | null>(null);
@@ -138,7 +131,7 @@ Please do the following:
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: selectedModel,
+          model: "openrouter/free",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt }
@@ -240,20 +233,7 @@ Please do the following:
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">AI Model</label>
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                >
-                  {MODELS.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+
 
               {error && (
                 <div className="p-3 bg-red-50 text-red-700 rounded-xl text-sm flex items-start gap-2">
