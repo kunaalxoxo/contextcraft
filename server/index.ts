@@ -89,21 +89,50 @@ app.post('/api/generate', async (req, res) => {
   try {
     const { messages } = req.body;
     
-    // Attempt Mistral Large connection (Gemini Pro equivalent logic model)
-    const response = await axios.post("https://api.mistral.ai/v1/chat/completions", {
-      model: "mistral-large-latest",
-      messages,
-      response_format: { type: "json_object" },
-      temperature: 0.72,
-      max_tokens: 6000
-    }, {
-      headers: {
-        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        "Content-Type": "application/json"
-      }
-    });
+    const attemptGenerate = async (targetModel: string) => {
+      return await axios.post("https://api.mistral.ai/v1/chat/completions", {
+        model: targetModel,
+        messages,
+        response_format: { type: "json_object" },
+        temperature: 0.72,
+        max_tokens: 6000
+      }, {
+        headers: {
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      });
+    };
 
-    return res.json(response.data);
+    const modelsToTry = [
+      "mistral-large-latest", // Pro Equivalent
+      "mistral-small-latest", // Fast & Free Tier Safe
+      "open-mistral-nemo",    // Universal Open Source Safety Net
+      "pixtral-12b-2409"      // Extra fallback
+    ];
+
+    let lastError: any;
+    for (const targetModel of modelsToTry) {
+      try {
+        console.log(`[Mistral Engine] Attempting generation with ${targetModel}...`);
+        const resp = await attemptGenerate(targetModel);
+        return res.json(resp.data);
+      } catch (err: any) {
+        lastError = err;
+        const status = err.response?.status;
+        console.warn(`[Mistral] ${targetModel} failed (${status}): ${err.response?.data?.message || err.message}`);
+        
+        // 401/403 often means "Free tier doesn't support this model"
+        // 429 means "Rate limited"
+        // 400 means "Model doesn't support JSON mode"
+        if (status === 403 || status === 429 || status === 400 || status === 404 || status === 401) {
+          continue; // Try next model in chain
+        }
+        break; // Hard crash for other errors
+      }
+    }
+
+    throw lastError;
   } catch (error: any) {
     console.error('Generate Error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Generation failed', details: error.response?.data || error.message });
