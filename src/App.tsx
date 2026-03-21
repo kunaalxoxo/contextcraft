@@ -56,11 +56,11 @@ function safeParseJSON(text: string) {
 }
 
 const MODELS = [
-  { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek Chat V3 (Free)' },
-  { id: 'meta-llama/llama-4-maverick:free', name: 'Llama 4 Maverick (Free)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)' },
-  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 (Free)' },
   { id: 'openrouter/free', name: 'OpenRouter Auto (Free)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 24B (Free)' },
+  { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (Free)' },
+  { id: 'qwen/qwen3-coder:free', name: 'Qwen 3 Coder (Free)' }
 ];
 
 export default function App() {
@@ -68,7 +68,7 @@ export default function App() {
   const [targetCompany, setTargetCompany] = useState('');
   const [goal, setGoal] = useState('');
   const [referenceUrl, setReferenceUrl] = useState('');
-  const [selectedModel, setSelectedModel] = useState('deepseek/deepseek-chat-v3-0324:free');
+  const [selectedModel, setSelectedModel] = useState('openrouter/free');
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<OutreachResult | null>(null);
@@ -328,7 +328,7 @@ Please do the following:
               </div>
               <h3 className="text-xl font-semibold text-slate-900 mb-2">Ready to craft</h3>
               <p className="text-slate-500 max-w-md">
-                Enter a target's details on the left. The AI pipeline will research them via Google Search and generate hyper-personalized outreach.
+                Enter a target's details on the left. The AI pipeline will research them and generate hyper-personalized outreach.
               </p>
             </div>
           ) : isGenerating ? (
