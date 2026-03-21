@@ -106,35 +106,32 @@ app.post('/api/generate', async (req, res) => {
       });
     };
 
-    try {
-      // 1. Core Model
-      const initialModel = model || "meta-llama/llama-3.3-70b-instruct:free";
-      const resp = await attemptGenerate(initialModel);
-      return res.json(resp.data);
-    } catch (e1: any) {
-      if (e1.response?.status === 429) {
-         console.warn("70B Model rate limited. Falling back to DeepSeek...");
-         try {
-           // 2. Fallback Model 1
-           const resp2 = await attemptGenerate("deepseek/deepseek-chat-v3-0324:free");
-           return res.json(resp2.data);
-         } catch (e2: any) {
-           if (e2.response?.status === 429) {
-             console.warn("DeepSeek rate limited. Falling back to Mistral Small...");
-             // 3. Fallback Model 2
-             const resp3 = await attemptGenerate("mistralai/mistral-small-3.1-24b-instruct:free");
-             return res.json(resp3.data);
-           }
-           if (e2.response?.status === 404) {
-             console.warn("DeepSeek 404 Not Found. Falling back to Mistral Small...");
-             const resp3 = await attemptGenerate("mistralai/mistral-small-3.1-24b-instruct:free");
-             return res.json(resp3.data);
-           }
-           throw e2;
-         }
+    const modelsToTry = [
+      model || "meta-llama/llama-3.3-70b-instruct:free",
+      "deepseek/deepseek-chat-v3-0324:free",
+      "mistralai/mistral-small-3.1-24b-instruct:free",
+      "openrouter/free" // Ultimate fail-safe
+    ];
+
+    let lastError: any;
+    for (const targetModel of modelsToTry) {
+      try {
+        const resp = await attemptGenerate(targetModel);
+        return res.json(resp.data);
+      } catch (err: any) {
+        lastError = err;
+        const status = err.response?.status;
+        // If rate limited, not found, or bad gateway, try the next model
+        if (status === 429 || status === 404 || status === 502) {
+          console.warn(`[OpenRouter] ${targetModel} failed with status ${status}. Falling back...`);
+          continue;
+        }
+        // For hard errors (like 401 Unauthorized or 400 Bad Request), don't retry
+        break;
       }
-      throw e1;
     }
+
+    throw lastError;
   } catch (error: any) {
     console.error('Generate Error:', error.response?.data || error.message);
     res.status(500).json({ error: 'Generation failed', details: error.response?.data || error.message });
